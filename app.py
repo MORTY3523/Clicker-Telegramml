@@ -1,7 +1,6 @@
 import os
 import logging
 import asyncio
-import requests
 from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
@@ -13,11 +12,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Токен берется из переменных окружения Render
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 PORT = int(os.environ.get("PORT", 10000))
 
-# Клавиатура с кнопками (ReplyKeyboardMarkup)
+# --- Клавиатура ---
 def get_main_keyboard():
     keyboard = [
         [KeyboardButton("⛏ Кликнуть"), KeyboardButton("👤 Профиль")],
@@ -25,26 +23,18 @@ def get_main_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# Обработчик команды /start
+# --- Команды ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
     await update.message.reply_text(
-        f"👋 Привет, {user.first_name}!\n\n"
-        "Ты попал в кликер-симулятор.\n"
-        "Используй кнопки ниже или команды:\n"
-        "/click — кликнуть\n"
-        "/profile — профиль\n"
-        "/shop — магазин\n"
-        "/upgrade — апгрейд",
+        f"👋 Привет, {update.effective_user.first_name}!\n\n"
+        "/click — кликнуть\n/profile — профиль\n/shop — магазин\n/upgrade — апгрейд",
         reply_markup=get_main_keyboard()
     )
 
-# Обработчик кнопки "⛏ Кликнуть"
-async def click_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ +0.000001 алмаза", reply_markup=get_main_keyboard())
 
-# Обработчик кнопки "👤 Профиль"
-async def profile_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👤 Профиль\n"
         "└ Алмазы: 0.00000000\n"
@@ -54,94 +44,86 @@ async def profile_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard()
     )
 
-# Обработчик кнопки "🏪 Магазин"
-async def shop_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🏪 Магазин\n\n"
-        "🔧 Улучшение генератора\n"
-        "└ Уровень: 0\n"
-        "└ Цена: 0.1 алмазов\n\n"
-        "👉 /upgrade — купить",
+        "🔧 Улучшение генератора: 0.1 алмазов",
         reply_markup=get_main_keyboard()
     )
 
-# Обработчик кнопки "🔧 Апгрейд"
-async def upgrade_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Не хватает алмазов", reply_markup=get_main_keyboard())
+
+# --- Кнопки ---
+async def handle_click_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await click(update, context)
+
+async def handle_profile_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await profile(update, context)
+
+async def handle_shop_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await shop(update, context)
+
+async def handle_upgrade_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await upgrade(update, context)
+
+# --- Всё остальное ---
+async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "❌ Не хватает алмазов\nНужно: 0.1",
+        "Используй кнопки внизу",
         reply_markup=get_main_keyboard()
     )
 
-# Обработчик текстовых команд
-async def click_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await click_button(update, context)
-
-async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await profile_button(update, context)
-
-async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await shop_button(update, context)
-
-async def upgrade_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await upgrade_button(update, context)
-
-# Обработчик всех остальных сообщений (которые не команды и не кнопки)
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text in ["⛏ Кликнуть", "👤 Профиль", "🏪 Магазин", "🔧 Апгрейд"]:
-        return  # Эти уже обработаны отдельно
-    await update.message.reply_text(
-        "Используй кнопки внизу или команды: /start, /click, /profile, /shop, /upgrade",
-        reply_markup=get_main_keyboard()
-    )
-
-# Настройка aiohttp сервера (чтобы Render не ругался)
-async def handle_health(request):
+# --- Health check для Render ---
+async def health(request):
     return web.Response(text="Bot is running")
 
+# --- Запуск ---
 async def main():
-    # Создаем aiohttp приложение
+    # Веб-сервер, чтобы Render не думал, что мы умерли
     app_web = web.Application()
-    app_web.router.add_get("/", handle_health)
-    app_web.router.add_get("/health", handle_health)
-    
-    # Запускаем веб-сервер
+    app_web.router.add_get("/", health)
+    app_web.router.add_get("/health", health)
+
     runner = web.AppRunner(app_web)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    logger.info(f"HTTP Server started on port {PORT}")
-    
-    # Создаем Telegram бота (без Updater, напрямую через Application)
-    builder = Application.builder().token(TOKEN)
-    builder.updater(None)  # Отключаем встроенный Updater, будем использовать polling
-    bot_app = builder.build()
-    
-    # Добавляем обработчики
+    logger.info(f"✅ HTTP сервер запущен на порту {PORT}")
+
+    # Создаём бота с polling
+    bot_app = Application.builder().token(TOKEN).build()
+
+    # Регистрируем команды
     bot_app.add_handler(CommandHandler("start", start))
-    bot_app.add_handler(CommandHandler("click", click_command))
-    bot_app.add_handler(CommandHandler("profile", profile_command))
-    bot_app.add_handler(CommandHandler("shop", shop_command))
-    bot_app.add_handler(CommandHandler("upgrade", upgrade_command))
-    
-    # Обработчики для кнопок
-    bot_app.add_handler(MessageHandler(filters.Text("⛏ Кликнуть"), click_button))
-    bot_app.add_handler(MessageHandler(filters.Text("👤 Профиль"), profile_button))
-    bot_app.add_handler(MessageHandler(filters.Text("🏪 Магазин"), shop_button))
-    bot_app.add_handler(MessageHandler(filters.Text("🔧 Апгрейд"), upgrade_button))
-    
-    # Обработчик всех остальных сообщений
-    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
-    
-    # Запускаем бота
-    logger.info("Starting bot...")
+    bot_app.add_handler(CommandHandler("click", click))
+    bot_app.add_handler(CommandHandler("profile", profile))
+    bot_app.add_handler(CommandHandler("shop", shop))
+    bot_app.add_handler(CommandHandler("upgrade", upgrade))
+
+    # Регистрируем кнопки
+    bot_app.add_handler(MessageHandler(filters.Text("⛏ Кликнуть"), handle_click_button))
+    bot_app.add_handler(MessageHandler(filters.Text("👤 Профиль"), handle_profile_button))
+    bot_app.add_handler(MessageHandler(filters.Text("🏪 Магазин"), handle_shop_button))
+    bot_app.add_handler(MessageHandler(filters.Text("🔧 Апгрейд"), handle_upgrade_button))
+
+    # Всё остальное
+    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback))
+
+    # Запуск
+    logger.info("🚀 Бот запускается...")
     await bot_app.initialize()
     await bot_app.start()
-    
+
     # Запускаем polling
     await bot_app.updater.start_polling()
-    
-    # Держим бота запущенным
+    logger.info("✅ Бот слушает команды")
+
+    # Держим процесс живым
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Остановка")
