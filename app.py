@@ -2,10 +2,10 @@ import os
 import logging
 from flask import Flask, request
 import telegram
-from telegram import ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters
+from telegram import ReplyKeyboardMarkup, KeyboardButton, Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-# Настройка логирования
+# Логирование
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -16,11 +16,15 @@ logger = logging.getLogger(__name__)
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 PORT = int(os.environ.get("PORT", 10000))
 
-# Инициализация бота и Flask
-bot = telegram.Bot(token=TOKEN)
+if not TOKEN:
+    logger.error("❌ TELEGRAM_TOKEN не найден!")
+    exit(1)
+
+# Создаём приложение бота
+application = Application.builder().token(TOKEN).build()
 app = Flask(__name__)
 
-# Клавиатура с кнопками
+# ----- КЛАВИАТУРА -----
 def main_keyboard():
     keyboard = [
         [KeyboardButton("⛏ Кликнуть"), KeyboardButton("👤 Профиль")],
@@ -28,9 +32,9 @@ def main_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# Обработчики команд
-def start(update, context):
-    update.message.reply_text(
+# ----- ОБРАБОТЧИКИ КОМАНД -----
+async def start(update: Update, context):
+    await update.message.reply_text(
         "👋 Добро пожаловать в кликер!\n\n"
         "/click — кликнуть\n"
         "/profile — профиль\n"
@@ -39,14 +43,14 @@ def start(update, context):
         reply_markup=main_keyboard()
     )
 
-def click(update, context):
-    update.message.reply_text(
+async def click(update: Update, context):
+    await update.message.reply_text(
         "✅ +0.000001 алмаза",
         reply_markup=main_keyboard()
     )
 
-def profile(update, context):
-    update.message.reply_text(
+async def profile(update: Update, context):
+    await update.message.reply_text(
         "👤 Профиль\n"
         "└ Алмазы: 0.00000000\n"
         "└ Кликов: 0\n"
@@ -55,63 +59,66 @@ def profile(update, context):
         reply_markup=main_keyboard()
     )
 
-def shop(update, context):
-    update.message.reply_text(
+async def shop(update: Update, context):
+    await update.message.reply_text(
         "🏪 Магазин\n\n"
         "🔧 Улучшение генератора: 0.1 алмазов",
         reply_markup=main_keyboard()
     )
 
-def upgrade(update, context):
-    update.message.reply_text(
+async def upgrade(update: Update, context):
+    await update.message.reply_text(
         "❌ Не хватает алмазов",
         reply_markup=main_keyboard()
     )
 
-# Обработчик кнопок
-def button_handler(update, context):
+# ----- ОБРАБОТЧИК КНОПОК -----
+async def button_handler(update: Update, context):
     text = update.message.text
     if text == "⛏ Кликнуть":
-        click(update, context)
+        await click(update, context)
     elif text == "👤 Профиль":
-        profile(update, context)
+        await profile(update, context)
     elif text == "🏪 Магазин":
-        shop(update, context)
+        await shop(update, context)
     elif text == "🔧 Апгрейд":
-        upgrade(update, context)
+        await upgrade(update, context)
     else:
-        update.message.reply_text(
+        await update.message.reply_text(
             "Используй кнопки внизу",
             reply_markup=main_keyboard()
         )
 
-# Настройка диспетчера
-dispatcher = Dispatcher(bot, None, workers=0)
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("click", click))
-dispatcher.add_handler(CommandHandler("profile", profile))
-dispatcher.add_handler(CommandHandler("shop", shop))
-dispatcher.add_handler(CommandHandler("upgrade", upgrade))
-dispatcher.add_handler(MessageHandler(Filters.text, button_handler))
+# ----- РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ -----
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("click", click))
+application.add_handler(CommandHandler("profile", profile))
+application.add_handler(CommandHandler("shop", shop))
+application.add_handler(CommandHandler("upgrade", upgrade))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
 
-# Вебхук
+# ----- ВЕБХУК -----
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    update = telegram.Update.de_json(request.get_json(force=True), bot)
-    dispatcher.process_update(update)
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    application.update_queue.put_nowait(update)
     return "OK", 200
 
-# Проверка здоровья
+# ----- ПРОВЕРКА ЗДОРОВЬЯ -----
 @app.route('/')
 def home():
     return "Bot is running!", 200
 
-# Установка вебхука (вызвать один раз)
+@app.route('/health')
+def health():
+    return "OK", 200
+
+# ----- УСТАНОВКА ВЕБХУКА -----
 @app.route('/set_webhook')
 def set_webhook():
     webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-    bot.set_webhook(url=webhook_url)
-    return f"Webhook set to {webhook_url}"
+    application.bot.set_webhook(url=webhook_url)
+    return f"✅ Webhook set to {webhook_url}"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT)
